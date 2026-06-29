@@ -104,6 +104,11 @@ jobs:
         run: yes | sdkmanager "platforms;android-36" "build-tools;36.0.0" >/dev/null 2>&1 || true
       - name: Install aria2
         run: sudo apt-get install -y aria2 >/dev/null 2>&1
+      - name: Install Bouncy Castle (for npatch BKS)
+        run: |
+          wget -q https://repo1.maven.org/maven2/org/bouncycastle/bcprov-jdk18on/1.78.1/bcprov-jdk18on-1.78.1.jar -O bcprov.jar
+          sudo cp bcprov.jar $JAVA_HOME/lib/
+          echo "security.provider.11=org.bouncycastle.jce.provider.BouncyCastleProvider" | sudo tee -a $JAVA_HOME/conf/security/java.security
       - name: Download module artifact
         uses: actions/download-artifact@v4
         with:
@@ -154,6 +159,7 @@ jobs:
             --ks-pass pass:${{ secrets.KEYSTORE_PASSWORD }} \
             --ks-key-alias ${{ secrets.KEY_ALIAS }} \
             --key-pass pass:${{ secrets.KEY_PASSWORD }} \
+            --min-sdk-version 26 \
             out/aligned.apk
           mv out/aligned.apk out/NeteaseLogin-${{ matrix.game }}.apk
           $APKSIGNER verify out/NeteaseLogin-${{ matrix.game }}.apk && echo "✅ 原包签名OK"
@@ -171,6 +177,7 @@ jobs:
             --ks-pass pass:${{ secrets.KEYSTORE_PASSWORD }} \
             --ks-key-alias ${{ secrets.KEY_ALIAS }} \
             --key-pass pass:${{ secrets.KEY_PASSWORD }} \
+            --min-sdk-version 26 \
             out2/aligned.apk
           mv out2/aligned.apk out2/NeteaseLogin-${{ matrix.game }}-shared.apk
           $APKSIGNER verify out2/NeteaseLogin-${{ matrix.game }}-shared.apk && echo "✅ 共享包签名OK"
