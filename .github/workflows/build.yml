@@ -70,14 +70,21 @@ jobs:
             使用修改版客户端登录游戏**可能导致账号被封禁**。
             请自行评估风险，强烈建议先用小号测试，勿用主号。
 
+            ## 下载说明
+            - 模块: NeteaseLogin-module.apk（直接安装）
+            - 游戏包为 7z 压缩。若压缩后 <2GB 为单 .7z 文件；若 >2GB 自动分卷为 .7z.001 / .7z.002 ...（下载全部分卷）。解压命令一样：
+              `7z x NeteaseLogin-ID5.7z.001`（单文件时把 .001 去掉，或直接对 .7z 解压）
+              解压软件请自行寻找（7-Zip / ZArchiver / MT管理器等）
+
             ## 镜像下载地址（国内加速，v4.gh-proxy.com）
+            在 GitHub 下载地址前加 `https://v4.gh-proxy.com/` 即可走镜像。分卷文件依次加（.7z.001 .7z.002 ...）：
             - 模块: https://v4.gh-proxy.com/https://github.com/yfishyon/NeteaseIOSLogin/releases/download/${{ github.ref_name }}/NeteaseLogin-module.apk
-            - 第五人格原包 (com.netease.dwrg): https://v4.gh-proxy.com/https://github.com/yfishyon/NeteaseIOSLogin/releases/download/${{ github.ref_name }}/NeteaseLogin-ID5.apk
-            - 第五人格共享 (com.netease.dwrg1): https://v4.gh-proxy.com/https://github.com/yfishyon/NeteaseIOSLogin/releases/download/${{ github.ref_name }}/NeteaseLogin-ID5-shared.apk
-            - 光遇原包: https://v4.gh-proxy.com/https://github.com/yfishyon/NeteaseIOSLogin/releases/download/${{ github.ref_name }}/NeteaseLogin-Sky.apk
-            - 光遇共享: https://v4.gh-proxy.com/https://github.com/yfishyon/NeteaseIOSLogin/releases/download/${{ github.ref_name }}/NeteaseLogin-Sky-shared.apk
-            - 蛋仔派对原包: https://v4.gh-proxy.com/https://github.com/yfishyon/NeteaseIOSLogin/releases/download/${{ github.ref_name }}/NeteaseLogin-Party.apk
-            - 蛋仔派对共享: https://v4.gh-proxy.com/https://github.com/yfishyon/NeteaseIOSLogin/releases/download/${{ github.ref_name }}/NeteaseLogin-Party-shared.apk
+            - 第五人格原包: https://v4.gh-proxy.com/https://github.com/yfishyon/NeteaseIOSLogin/releases/download/${{ github.ref_name }}/NeteaseLogin-ID5.7z
+            - 第五人格共享: https://v4.gh-proxy.com/https://github.com/yfishyon/NeteaseIOSLogin/releases/download/${{ github.ref_name }}/NeteaseLogin-ID5-shared.7z
+            - 光遇原包: https://v4.gh-proxy.com/https://github.com/yfishyon/NeteaseIOSLogin/releases/download/${{ github.ref_name }}/NeteaseLogin-Sky.7z
+            - 光遇共享: https://v4.gh-proxy.com/https://github.com/yfishyon/NeteaseIOSLogin/releases/download/${{ github.ref_name }}/NeteaseLogin-Sky-shared.7z
+            - 蛋仔派对原包: https://v4.gh-proxy.com/https://github.com/yfishyon/NeteaseIOSLogin/releases/download/${{ github.ref_name }}/NeteaseLogin-Party.7z
+            - 蛋仔派对共享: https://v4.gh-proxy.com/https://github.com/yfishyon/NeteaseIOSLogin/releases/download/${{ github.ref_name }}/NeteaseLogin-Party-shared.7z
           generate_release_notes: false
 
   patch:
@@ -102,8 +109,8 @@ jobs:
           java-version: 21
       - name: Setup Android SDK
         run: yes | sdkmanager "platforms;android-36" "build-tools;36.0.0" >/dev/null 2>&1 || true
-      - name: Install aria2
-        run: sudo apt-get install -y aria2 >/dev/null 2>&1
+      - name: Install aria2 + 7z
+        run: sudo apt-get install -y aria2 p7zip-full >/dev/null 2>&1
       - name: Install Bouncy Castle (for npatch BKS)
         run: |
           wget -q https://repo1.maven.org/maven2/org/bouncycastle/bcprov-jdk18on/1.78.1/bcprov-jdk18on-1.78.1.jar -O bcprov.jar
@@ -116,14 +123,7 @@ jobs:
       - name: Parse game APK link
         id: apk
         run: python3 scripts/fetch_game.py "${{ matrix.adl }}"
-      - name: Cache game APK
-        id: cache
-        uses: actions/cache@v4
-        with:
-          path: cache/game.apk
-          key: ${{ matrix.game }}-${{ steps.apk.outputs.name }}
       - name: Download game APK (aria2c 多线程)
-        if: steps.cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p cache
           aria2c -x 16 -s 16 --max-tries=5 -o game.apk -d cache "${{ steps.apk.outputs.url }}"
@@ -146,7 +146,7 @@ jobs:
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > yfishyon1.jks
           chmod 600 yfishyon1.jks
-      - name: Patch 原包名 + 自签名
+      - name: Patch 原包名 + 自签名 + 7z分卷
         run: |
           mkdir -p out
           JAR=$(ls npatch/*.jar | head -1)
@@ -163,8 +163,10 @@ jobs:
             out/aligned.apk
           mv out/aligned.apk out/NeteaseLogin-${{ matrix.game }}.apk
           $APKSIGNER verify out/NeteaseLogin-${{ matrix.game }}.apk && echo "✅ 原包签名OK"
-          ls -la out/
-      - name: Patch 共享包名 + 自签名
+          7z a -t7z -mx=3 -v1900m out/NeteaseLogin-${{ matrix.game }}.7z out/NeteaseLogin-${{ matrix.game }}.apk
+          rm out/NeteaseLogin-${{ matrix.game }}.apk
+          ls -la out/NeteaseLogin-${{ matrix.game }}.7z*
+      - name: Patch 共享包名 + 自签名 + 7z分卷
         run: |
           mkdir -p out2
           JAR=$(ls npatch/*.jar | head -1)
@@ -181,13 +183,15 @@ jobs:
             out2/aligned.apk
           mv out2/aligned.apk out2/NeteaseLogin-${{ matrix.game }}-shared.apk
           $APKSIGNER verify out2/NeteaseLogin-${{ matrix.game }}-shared.apk && echo "✅ 共享包签名OK"
-          ls -la out2/
+          7z a -t7z -mx=3 -v1900m out2/NeteaseLogin-${{ matrix.game }}-shared.7z out2/NeteaseLogin-${{ matrix.game }}-shared.apk
+          rm out2/NeteaseLogin-${{ matrix.game }}-shared.apk
+          ls -la out2/NeteaseLogin-${{ matrix.game }}-shared.7z*
       - name: Upload to Release (带重试防并发冲突)
         run: |
           for i in 1 2 3 4 5; do
             gh release upload "${{ github.ref_name }}" \
-              out/NeteaseLogin-${{ matrix.game }}.apk \
-              out2/NeteaseLogin-${{ matrix.game }}-shared.apk \
+              out/NeteaseLogin-${{ matrix.game }}.7z* \
+              out2/NeteaseLogin-${{ matrix.game }}-shared.7z* \
               --clobber -R yfishyon/NeteaseIOSLogin && break
             echo "retry $i (并发冲突)"; sleep 8
           done
