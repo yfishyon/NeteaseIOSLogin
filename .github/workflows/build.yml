@@ -57,7 +57,7 @@ jobs:
         with:
           name: module-apk
           path: NeteaseLogin-module.apk
-      - name: Upload module + body to Release
+      - name: Create Release + upload module
         uses: softprops/action-gh-release@v2
         with:
           files: NeteaseLogin-module.apk
@@ -84,7 +84,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build-module
     strategy:
-      max-parallel: 1
+      fail-fast: false
       matrix:
         include:
           - game: ID5
@@ -102,10 +102,8 @@ jobs:
           java-version: 21
       - name: Setup Android SDK
         run: yes | sdkmanager "platforms;android-36" "build-tools;36.0.0" >/dev/null 2>&1 || true
-      - name: Decode keystore
-        run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > yfishyon1.jks
-          chmod 600 yfishyon1.jks
+      - name: Install aria2
+        run: sudo apt-get install -y aria2 >/dev/null 2>&1
       - name: Download module artifact
         uses: actions/download-artifact@v4
         with:
@@ -119,11 +117,11 @@ jobs:
         with:
           path: cache/game.apk
           key: ${{ matrix.game }}-${{ steps.apk.outputs.name }}
-      - name: Download game APK
+      - name: Download game APK (aria2c 多线程)
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p cache
-          curl -L --fail -o cache/game.apk "${{ steps.apk.outputs.url }}"
+          aria2c -x 16 -s 16 --max-tries=5 -o game.apk -d cache "${{ steps.apk.outputs.url }}"
           ls -la cache/game.apk
       - name: Download npatch
         run: |
@@ -137,32 +135,54 @@ jobs:
         run: |
           AAPT=$(command -v aapt || ls $ANDROID_HOME/build-tools/*/aapt 2>/dev/null | head -1)
           PKG=$($AAPT dump badging cache/game.apk | grep -oE "name='[^']+'" | head -1 | sed "s/name='//;s/'//")
-          echo "pkg=$PKG" >> $GITHUB_OUTPUT
           echo "shared=${PKG}1" >> $GITHUB_OUTPUT
           echo "package: $PKG -> shared: ${PKG}1"
-      - name: Patch 原包名
+      - name: Decode keystore
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > yfishyon1.jks
+          chmod 600 yfishyon1.jks
+      - name: Patch 原包名 + 自签名
         run: |
           mkdir -p out
           JAR=$(ls npatch/*.jar | head -1)
-          java -jar "$JAR" \
-            -m NeteaseLogin-module.apk \
-            -k $GITHUB_WORKSPACE/yfishyon1.jks ${{ secrets.KEYSTORE_PASSWORD }} ${{ secrets.KEY_ALIAS }} ${{ secrets.KEY_PASSWORD }} \
-            -l 1 -o out/ cache/game.apk
-          mv out/*.apk out/NeteaseLogin-${{ matrix.game }}.apk
+          java -jar "$JAR" -m NeteaseLogin-module.apk -npa -l 2 -o out/ cache/game.apk
+          APK=$(ls out/*.apk | head -1)
+          ZIPALIGN=$(command -v zipalign || ls $ANDROID_HOME/build-tools/*/zipalign | head -1)
+          APKSIGNER=$(command -v apksigner || ls $ANDROID_HOME/build-tools/*/apksigner | head -1)
+          $ZIPALIGN -f 4 "$APK" out/aligned.apk
+          $APKSIGNER sign --ks yfishyon1.jks \
+            --ks-pass pass:${{ secrets.KEYSTORE_PASSWORD }} \
+            --ks-key-alias ${{ secrets.KEY_ALIAS }} \
+            --key-pass pass:${{ secrets.KEY_PASSWORD }} \
+            out/aligned.apk
+          mv out/aligned.apk out/NeteaseLogin-${{ matrix.game }}.apk
+          $APKSIGNER verify out/NeteaseLogin-${{ matrix.game }}.apk && echo "✅ 原包签名OK"
           ls -la out/
-      - name: Patch 共享包名
+      - name: Patch 共享包名 + 自签名
         run: |
           mkdir -p out2
           JAR=$(ls npatch/*.jar | head -1)
-          java -jar "$JAR" \
-            -m NeteaseLogin-module.apk \
-            -k $GITHUB_WORKSPACE/yfishyon1.jks ${{ secrets.KEYSTORE_PASSWORD }} ${{ secrets.KEY_ALIAS }} ${{ secrets.KEY_PASSWORD }} \
-            -l 1 -p ${{ steps.pkg.outputs.shared }} -o out2/ cache/game.apk
-          mv out2/*.apk out2/NeteaseLogin-${{ matrix.game }}-shared.apk
+          java -jar "$JAR" -m NeteaseLogin-module.apk -npa -l 2 -p ${{ steps.pkg.outputs.shared }} -o out2/ cache/game.apk
+          APK=$(ls out2/*.apk | head -1)
+          ZIPALIGN=$(command -v zipalign || ls $ANDROID_HOME/build-tools/*/zipalign | head -1)
+          APKSIGNER=$(command -v apksigner || ls $ANDROID_HOME/build-tools/*/apksigner | head -1)
+          $ZIPALIGN -f 4 "$APK" out2/aligned.apk
+          $APKSIGNER sign --ks yfishyon1.jks \
+            --ks-pass pass:${{ secrets.KEYSTORE_PASSWORD }} \
+            --ks-key-alias ${{ secrets.KEY_ALIAS }} \
+            --key-pass pass:${{ secrets.KEY_PASSWORD }} \
+            out2/aligned.apk
+          mv out2/aligned.apk out2/NeteaseLogin-${{ matrix.game }}-shared.apk
+          $APKSIGNER verify out2/NeteaseLogin-${{ matrix.game }}-shared.apk && echo "✅ 共享包签名OK"
           ls -la out2/
-      - name: Upload to Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            out/NeteaseLogin-${{ matrix.game }}.apk
-            out2/NeteaseLogin-${{ matrix.game }}-shared.apk
+      - name: Upload to Release (带重试防并发冲突)
+        run: |
+          for i in 1 2 3 4 5; do
+            gh release upload "${{ github.ref_name }}" \
+              out/NeteaseLogin-${{ matrix.game }}.apk \
+              out2/NeteaseLogin-${{ matrix.game }}-shared.apk \
+              --clobber -R yfishyon/NeteaseIOSLogin && break
+            echo "retry $i (并发冲突)"; sleep 8
+          done
+        env:
+          GH_TOKEN: ${{ github.token }}
