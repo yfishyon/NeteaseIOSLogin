@@ -22,6 +22,8 @@ android {
                 storePassword = providers.environmentVariable("KEYSTORE_PASSWORD").orNull
                 keyAlias = providers.environmentVariable("KEY_ALIAS").orNull
                 keyPassword = providers.environmentVariable("KEY_PASSWORD").orNull
+                enableV1Signing = true
+                enableV2Signing = true
             }
         }
     }
